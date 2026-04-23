@@ -1,0 +1,14 @@
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.idea/
+.mvn/
+*.log
+
+# Environment secrets – never commit
+.env
+application-prod.yml
+application-local.yml

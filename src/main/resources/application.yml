@@ -1,0 +1,55 @@
+spring:
+  application:
+    name: moneymate-backend
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/moneymate?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 3000ms
+
+server:
+  port: 8080
+  error:
+    include-message: always
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:moneymate-super-secret-key-must-be-at-least-256-bits-long-for-hs256}
+    access-token-expiry-ms: 900000        # 15 minutes
+    refresh-token-expiry-days: 30
+
+  otp:
+    expiry-seconds: 300                   # 5 minutes
+    max-attempts: 3
+
+  rate-limit:
+    otp-per-minute: 3
+
+  cors:
+    allowed-origins:
+      - "http://localhost:3000"
+      - "https://moneymate.pk"
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
