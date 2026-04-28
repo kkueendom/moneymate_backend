@@ -25,9 +25,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final String OTP_PREFIX   = "otp:";
-    private static final String OTP_TRIES    = "otp_tries:";
-    private static final String REFRESH_PREFIX = "refresh:";
+    private static final String OTP_PREFIX      = "otp:";
+    private static final String OTP_TRIES       = "otp_tries:";
+    private static final String PENDING_PREFIX  = "pending:";
+    private static final String REFRESH_PREFIX  = "refresh:";
 
     private final UserRepository userRepository;
     private final StringRedisTemplate redis;
@@ -46,10 +47,9 @@ public class AuthService {
     @Value("${app.rate-limit.otp-per-minute}")
     private int otpPerMinute;
 
-    // Per-IP rate limit buckets (in-memory; for production use Redis-backed Bucket4j)
     private final Map<String, Bucket> ipBuckets = new ConcurrentHashMap<>();
 
-    // ── Register ─────────────────────────────────────────────────────────
+    // ── Register ──────────────────────────────────────────────────────────────
 
     @Transactional
     public void register(AuthDto.RegisterRequest req, String clientIp) {
@@ -58,57 +58,62 @@ public class AuthService {
         if (userRepository.existsByPhone(req.getPhone())) {
             throw BusinessException.badRequest("Phone already registered");
         }
+        if (userRepository.existsByUsername(req.getUsername())) {
+            throw BusinessException.badRequest("Username already taken");
+        }
 
         // Store pending registration in Redis until OTP verified
-        String pinHash = passwordEncoder.encode(req.getPin());
-        String nameVal = req.getName() != null ? req.getName() : "";
+        String passwordHash = passwordEncoder.encode(req.getPassword());
+        String nameVal      = req.getName() != null ? req.getName() : "";
+        // format: passwordHash|username|name
         redis.opsForValue().set(
-            "pending:" + req.getPhone(),
-            pinHash + "|" + nameVal,
-            Duration.ofSeconds(otpExpirySeconds * 2));
+                PENDING_PREFIX + req.getPhone(),
+                passwordHash + "|" + req.getUsername() + "|" + nameVal,
+                Duration.ofSeconds(otpExpirySeconds * 2));
 
         sendOtp(req.getPhone());
     }
 
-    // ── Verify OTP (completes registration) ──────────────────────────────
+    // ── Verify OTP (completes registration) ───────────────────────────────────
 
     @Transactional
     public AuthDto.TokenResponse verifyOtp(AuthDto.VerifyOtpRequest req) {
         validateOtp(req.getPhone(), req.getOtp());
 
-        String pending = redis.opsForValue().get("pending:" + req.getPhone());
+        String pending = redis.opsForValue().get(PENDING_PREFIX + req.getPhone());
         if (pending == null) {
             throw BusinessException.badRequest("Registration session expired, please register again");
         }
-        String[] parts = pending.split("\\|", 2);
-        String pinHash = parts[0];
-        String name    = parts.length > 1 ? parts[1] : "";
+        String[] parts        = pending.split("\\|", 3);
+        String   passwordHash = parts[0];
+        String   username     = parts.length > 1 ? parts[1] : "";
+        String   name         = parts.length > 2 ? parts[2] : "";
 
         UserEntity user = UserEntity.builder()
                 .phone(req.getPhone())
-                .pinHash(pinHash)
+                .username(username)
+                .passwordHash(passwordHash)
                 .name(name.isBlank() ? null : name)
                 .build();
         user = userRepository.save(user);
 
-        redis.delete("pending:" + req.getPhone());
+        redis.delete(PENDING_PREFIX + req.getPhone());
         return buildTokens(user);
     }
 
-    // ── Login (phone + PIN) ───────────────────────────────────────────────
+    // ── Login (phone or username + password) ──────────────────────────────────
 
     public AuthDto.TokenResponse login(AuthDto.LoginRequest req) {
-        UserEntity user = userRepository.findByPhoneAndDeletedFalse(req.getPhone())
-                .orElseThrow(() -> BusinessException.unauthorized("Invalid credentials"));
+        UserEntity user = resolveUser(req.getIdentifier());
 
-        if (!passwordEncoder.matches(req.getPin(), user.getPinHash())) {
+        if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
             throw BusinessException.unauthorized("Invalid credentials");
         }
 
         return buildTokens(user);
     }
 
-    // ── Refresh token ────────────────────────────────────────────────────
+    // ── Refresh token ─────────────────────────────────────────────────────────
 
     @Transactional
     public AuthDto.TokenResponse refresh(AuthDto.RefreshRequest req) {
@@ -120,18 +125,26 @@ public class AuthService {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.unauthorized("User not found"));
 
-        // Rotate refresh token
         redis.delete(REFRESH_PREFIX + req.getRefreshToken());
         return buildTokens(user);
     }
 
-    // ── Logout ───────────────────────────────────────────────────────────
+    // ── Logout ────────────────────────────────────────────────────────────────
 
     public void logout(String refreshToken) {
         redis.delete(REFRESH_PREFIX + refreshToken);
     }
 
-    // ── OTP helpers ──────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private UserEntity resolveUser(String identifier) {
+        if (identifier.startsWith("+")) {
+            return userRepository.findByPhoneAndDeletedFalse(identifier)
+                    .orElseThrow(() -> BusinessException.unauthorized("Invalid credentials"));
+        }
+        return userRepository.findByUsernameAndDeletedFalse(identifier)
+                .orElseThrow(() -> BusinessException.unauthorized("Invalid credentials"));
+    }
 
     private void sendOtp(String phone) {
         String otp = String.format("%06d", new Random().nextInt(1_000_000));
@@ -165,33 +178,32 @@ public class AuthService {
 
     private void checkOtpRateLimit(String clientIp) {
         Bucket bucket = ipBuckets.computeIfAbsent(clientIp, ip ->
-            Bucket.builder()
-                .addLimit(Bandwidth.builder()
-                    .capacity(otpPerMinute)
-                    .refillGreedy(otpPerMinute, Duration.ofMinutes(1))
-                    .build())
-                .build());
+                Bucket.builder()
+                        .addLimit(Bandwidth.builder()
+                                .capacity(otpPerMinute)
+                                .refillGreedy(otpPerMinute, Duration.ofMinutes(1))
+                                .build())
+                        .build());
 
         if (!bucket.tryConsume(1)) {
             throw BusinessException.tooManyRequests("Too many OTP requests, please wait");
         }
     }
 
-    // ── Token builder ─────────────────────────────────────────────────────
-
     private AuthDto.TokenResponse buildTokens(UserEntity user) {
         String accessToken  = jwtUtil.generateAccessToken(user.getId(), user.getPhone());
         String refreshToken = UUID.randomUUID().toString();
         redis.opsForValue().set(
-            REFRESH_PREFIX + refreshToken,
-            user.getId(),
-            Duration.ofDays(refreshTokenExpiryDays));
+                REFRESH_PREFIX + refreshToken,
+                user.getId(),
+                Duration.ofDays(refreshTokenExpiryDays));
 
         AuthDto.TokenResponse resp = new AuthDto.TokenResponse();
         resp.setAccessToken(accessToken);
         resp.setRefreshToken(refreshToken);
         resp.setUserId(user.getId());
         resp.setPhone(user.getPhone());
+        resp.setUsername(user.getUsername());
         resp.setName(user.getName());
         return resp;
     }

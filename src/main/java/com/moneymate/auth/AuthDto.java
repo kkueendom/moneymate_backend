@@ -14,9 +14,13 @@ public class AuthDto {
         private String phone;
 
         @NotBlank
-        @Size(min = 4, max = 4, message = "PIN must be exactly 4 digits")
-        @Pattern(regexp = "^[0-9]{4}$", message = "PIN must be numeric")
-        private String pin;
+        @Size(min = 3, max = 30, message = "Username must be 3–30 characters")
+        @Pattern(regexp = "^[a-zA-Z0-9_]+$", message = "Username may only contain letters, numbers and underscores")
+        private String username;
+
+        @NotBlank
+        @Size(min = 8, max = 100, message = "Password must be at least 8 characters")
+        private String password;
 
         private String name;
     }
@@ -33,12 +37,12 @@ public class AuthDto {
 
     @Data
     public static class LoginRequest {
+        /** Phone number (+92XXXXXXXXXX) or username */
         @NotBlank
-        private String phone;
+        private String identifier;
 
         @NotBlank
-        @Size(min = 4, max = 4)
-        private String pin;
+        private String password;
     }
 
     @Data
@@ -53,6 +57,7 @@ public class AuthDto {
         private String refreshToken;
         private String userId;
         private String phone;
+        private String username;
         private String name;
     }
 }
