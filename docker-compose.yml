@@ -9,11 +9,14 @@ services:
       DB_USERNAME: moneymate
       DB_PASSWORD: moneymate_pass
       REDIS_HOST: redis
+      MONGODB_URI: mongodb://mongodb:27017/moneymate
       JWT_SECRET: change-me-in-production-use-a-256-bit-key
     depends_on:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      mongodb:
         condition: service_healthy
     restart: unless-stopped
 
@@ -46,6 +49,19 @@ services:
       timeout: 5s
       retries: 5
 
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   mysql_data:
   redis_data:
+  mongo_data:

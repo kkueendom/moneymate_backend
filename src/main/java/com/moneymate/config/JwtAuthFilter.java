@@ -24,9 +24,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final UserRepository userRepository;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
+    protected void doFilterInternal(HttpServletRequest request, 
+                                    HttpServletResponse response, 
                                     FilterChain filterChain) throws ServletException, IOException {
+        // Skip JWT validation for Swagger UI and API docs
+        String requestUri = request.getRequestURI();
+        if (requestUri.startsWith("/swagger-ui/") || requestUri.startsWith("/api-docs/")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);

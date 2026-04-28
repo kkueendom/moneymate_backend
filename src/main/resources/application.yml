@@ -23,6 +23,8 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 3000ms
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/moneymate}
 
 server:
   port: 8080

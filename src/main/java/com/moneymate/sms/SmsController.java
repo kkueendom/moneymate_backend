@@ -2,24 +2,24 @@ package com.moneymate.sms;
 
 import com.moneymate.common.ApiResponse;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-@Slf4j
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/v2/sms")
 @RequiredArgsConstructor
 public class SmsController {
 
+    private final SmsService smsService;
+
     @PostMapping("/report")
-    public ResponseEntity<ApiResponse<Void>> report(
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> report(
             @AuthenticationPrincipal String userId,
             @RequestBody SmsReportDto.ReportRequest req) {
-        // Phase C will persist anonymised SMS metadata for analytics.
-        log.info("SMS report from user {}: {} entries", userId,
-                req.getEntries() != null ? req.getEntries().size() : 0);
-        return ResponseEntity.ok(ApiResponse.ok("Received", null));
+        int saved = smsService.report(userId, req);
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("saved", saved)));
     }
 }
