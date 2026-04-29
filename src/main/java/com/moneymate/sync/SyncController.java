@@ -15,11 +15,10 @@ public class SyncController {
     private final SyncService syncService;
 
     @PostMapping("/push")
-    public ResponseEntity<ApiResponse<Void>> push(
+    public ResponseEntity<ApiResponse<SyncDto.PushResponse>> push(
             @AuthenticationPrincipal String userId,
             @Valid @RequestBody SyncDto.PushRequest req) {
-        syncService.push(userId, req);
-        return ResponseEntity.ok(ApiResponse.ok("Pushed successfully", null));
+        return ResponseEntity.ok(ApiResponse.ok(syncService.push(userId, req)));
     }
 
     @GetMapping("/pull")
