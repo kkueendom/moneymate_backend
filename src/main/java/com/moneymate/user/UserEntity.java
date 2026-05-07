@@ -29,9 +29,6 @@ public class UserEntity {
     @Column(nullable = false, unique = true, length = 20)
     private String phone;
 
-    @Column(nullable = false, unique = true, length = 30)
-    private String username;
-
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 

@@ -58,17 +58,13 @@ public class AuthService {
         if (userRepository.existsByPhone(req.getPhone())) {
             throw BusinessException.badRequest("Phone already registered");
         }
-        if (userRepository.existsByUsername(req.getUsername())) {
-            throw BusinessException.badRequest("Username already taken");
-        }
 
-        // Store pending registration in Redis until OTP verified
+        // Store pending registration in Redis until OTP verified — format: passwordHash|name
         String passwordHash = passwordEncoder.encode(req.getPassword());
         String nameVal      = req.getName() != null ? req.getName() : "";
-        // format: passwordHash|username|name
         redis.opsForValue().set(
                 PENDING_PREFIX + req.getPhone(),
-                passwordHash + "|" + req.getUsername() + "|" + nameVal,
+                passwordHash + "|" + nameVal,
                 Duration.ofSeconds(otpExpirySeconds * 2));
 
         sendOtp(req.getPhone());
@@ -84,14 +80,12 @@ public class AuthService {
         if (pending == null) {
             throw BusinessException.badRequest("Registration session expired, please register again");
         }
-        String[] parts        = pending.split("\\|", 3);
+        String[] parts        = pending.split("\\|", 2);
         String   passwordHash = parts[0];
-        String   username     = parts.length > 1 ? parts[1] : "";
-        String   name         = parts.length > 2 ? parts[2] : "";
+        String   name         = parts.length > 1 ? parts[1] : "";
 
         UserEntity user = UserEntity.builder()
                 .phone(req.getPhone())
-                .username(username)
                 .passwordHash(passwordHash)
                 .name(name.isBlank() ? null : name)
                 .build();
@@ -104,7 +98,8 @@ public class AuthService {
     // ── Login (phone or username + password) ──────────────────────────────────
 
     public AuthDto.TokenResponse login(AuthDto.LoginRequest req) {
-        UserEntity user = resolveUser(req.getIdentifier());
+        UserEntity user = userRepository.findByPhoneAndDeletedFalse(req.getPhone())
+                .orElseThrow(() -> BusinessException.unauthorized("Invalid credentials"));
 
         if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
             throw BusinessException.unauthorized("Invalid credentials");
@@ -136,15 +131,6 @@ public class AuthService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private UserEntity resolveUser(String identifier) {
-        if (identifier.startsWith("+")) {
-            return userRepository.findByPhoneAndDeletedFalse(identifier)
-                    .orElseThrow(() -> BusinessException.unauthorized("Invalid credentials"));
-        }
-        return userRepository.findByUsernameAndDeletedFalse(identifier)
-                .orElseThrow(() -> BusinessException.unauthorized("Invalid credentials"));
-    }
 
     private void sendOtp(String phone) {
         String otp = String.format("%06d", new Random().nextInt(1_000_000));
@@ -203,7 +189,6 @@ public class AuthService {
         resp.setRefreshToken(refreshToken);
         resp.setUserId(user.getId());
         resp.setPhone(user.getPhone());
-        resp.setUsername(user.getUsername());
         resp.setName(user.getName());
         return resp;
     }

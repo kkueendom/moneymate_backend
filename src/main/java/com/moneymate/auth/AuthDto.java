@@ -14,11 +14,6 @@ public class AuthDto {
         private String phone;
 
         @NotBlank
-        @Size(min = 3, max = 30, message = "Username must be 3–30 characters")
-        @Pattern(regexp = "^[a-zA-Z0-9_]+$", message = "Username may only contain letters, numbers and underscores")
-        private String username;
-
-        @NotBlank
         @Size(min = 8, max = 100, message = "Password must be at least 8 characters")
         private String password;
 
@@ -37,9 +32,9 @@ public class AuthDto {
 
     @Data
     public static class LoginRequest {
-        /** Phone number (+92XXXXXXXXXX) or username */
         @NotBlank
-        private String identifier;
+        @Pattern(regexp = "^\\+92[0-9]{10}$", message = "Phone must be a valid Pakistani number: +92XXXXXXXXXX")
+        private String phone;
 
         @NotBlank
         private String password;
@@ -57,7 +52,6 @@ public class AuthDto {
         private String refreshToken;
         private String userId;
         private String phone;
-        private String username;
         private String name;
     }
 }
