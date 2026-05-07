@@ -8,16 +8,16 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.UuidGenerator;
 
 @Entity
-@Table(name = "synced_transactions", indexes = {
-        @Index(name = "idx_st_user_updated", columnList = "user_id, updated_at"),
-        @Index(name = "idx_st_user_client",  columnList = "user_id, client_id", unique = true),
-        @Index(name = "idx_st_user_sms",     columnList = "user_id, sms_hash",  unique = true)
+@Table(name = "synced_udhars", indexes = {
+        @Index(name = "idx_su_user_updated", columnList = "user_id, updated_at"),
+        @Index(name = "idx_su_user_client",  columnList = "user_id, client_id", unique = true),
+        @Index(name = "idx_su_user_sms",     columnList = "user_id, sms_hash",  unique = true)
 })
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class SyncedTransaction {
+public class SyncedUdhar {
 
     @Id
     @UuidGenerator
@@ -31,43 +31,40 @@ public class SyncedTransaction {
     @Column(name = "client_id", nullable = false)
     private Long clientId;
 
-    /** Server UUID of the linked account */
-    @Column(name = "account_server_id", length = 36)
-    private String accountServerId;
+    @Column(nullable = false, length = 10)
+    private String direction;
+
+    @Column(name = "person_name", nullable = false)
+    private String personName;
+
+    private String phone;
 
     @Column(nullable = false)
     private String amount;
 
-    @Column(nullable = false, length = 10)
-    private String direction;
+    @Column(length = 10)
+    private String currency;
 
-    @Column(length = 20)
-    private String type;
+    @Column(name = "paid_amount")
+    private String paidAmount;
 
-    @Column(name = "tx_status", length = 20)
-    private String txStatus;
+    @Column(name = "lent_date")
+    private Long lentDate;
 
-    @Column(columnDefinition = "TEXT")
-    private String description;
-
-    private String merchant;
+    @Column(name = "due_date")
+    private Long dueDate;
 
     @Column(columnDefinition = "TEXT")
     private String note;
 
-    private String tags;
-
-    @Column(name = "tx_date")
-    private Long txDate;
+    @Column(length = 20)
+    private String status;
 
     @Column(name = "created_at")
     private Long createdAt;
 
     @Column(name = "updated_at")
     private Long updatedAt;
-
-    @Column(name = "category_key", length = 60)
-    private String categoryKey;
 
     @Builder.Default
     @Column(name = "is_deleted")

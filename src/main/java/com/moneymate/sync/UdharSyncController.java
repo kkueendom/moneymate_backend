@@ -8,36 +8,30 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v2/sync")
+@RequestMapping("/api/v2/udhars")
 @RequiredArgsConstructor
-public class SyncController {
+public class UdharSyncController {
 
-    private final SyncService syncService;
+    private final UdharSyncService udharSyncService;
 
     @PostMapping("/push")
-    public ResponseEntity<ApiResponse<SyncDto.PushResponse>> push(
+    public ResponseEntity<ApiResponse<UdharSyncDto.PushResponse>> push(
             @AuthenticationPrincipal String userId,
-            @Valid @RequestBody SyncDto.PushRequest req) {
-        return ResponseEntity.ok(ApiResponse.ok(syncService.push(userId, req)));
+            @Valid @RequestBody UdharSyncDto.PushRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(udharSyncService.push(userId, req)));
     }
 
     @GetMapping("/pull")
-    public ResponseEntity<ApiResponse<SyncDto.PullResponse>> pull(
+    public ResponseEntity<ApiResponse<UdharSyncDto.PullResponse>> pull(
             @AuthenticationPrincipal String userId,
             @RequestParam(defaultValue = "0") long since) {
-        return ResponseEntity.ok(ApiResponse.ok(syncService.pull(userId, since)));
-    }
-
-    @GetMapping("/status")
-    public ResponseEntity<ApiResponse<SyncDto.StatusResponse>> status(
-            @AuthenticationPrincipal String userId) {
-        return ResponseEntity.ok(ApiResponse.ok(syncService.status(userId)));
+        return ResponseEntity.ok(ApiResponse.ok(udharSyncService.pull(userId, since)));
     }
 
     @DeleteMapping("/deleteAll")
     public ResponseEntity<ApiResponse<Void>> deleteAll(
             @AuthenticationPrincipal String userId) {
-        syncService.deleteAll(userId);
+        udharSyncService.deleteAll(userId);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 }

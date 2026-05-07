@@ -8,4 +8,6 @@ import java.util.Optional;
 public interface SyncedTransactionRepository extends JpaRepository<SyncedTransaction, String> {
     List<SyncedTransaction> findByUserIdAndUpdatedAtGreaterThan(String userId, long since);
     Optional<SyncedTransaction> findByUserIdAndClientId(String userId, Long clientId);
+    Optional<SyncedTransaction> findByUserIdAndSmsHash(String userId, String smsHash);
+    void deleteAllByUserId(String userId);
 }

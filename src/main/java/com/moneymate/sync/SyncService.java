@@ -1,15 +1,20 @@
 package com.moneymate.sync;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SyncService {
@@ -21,7 +26,6 @@ public class SyncService {
 
     // ── Push ─────────────────────────────────────────────────────────────────
 
-    @Transactional
     public SyncDto.PushResponse push(String userId, SyncDto.PushRequest req) {
         List<SyncDto.ServerIdMapping> mappings = new ArrayList<>();
         long now = System.currentTimeMillis();
@@ -30,48 +34,8 @@ public class SyncService {
                 req.getTransactions() != null ? req.getTransactions() : Collections.emptyList();
 
         for (SyncDto.TransactionRecord rec : records) {
-            SyncedTransaction entity = txRepo
-                    .findByUserIdAndClientId(userId, rec.getClientId())
-                    .orElse(null);
-
-            if (entity == null) {
-                // New record from client
-                entity = SyncedTransaction.builder()
-                        .userId(userId)
-                        .clientId(rec.getClientId())
-                        .build();
-            } else if (rec.getUpdatedAt() != null && rec.getUpdatedAt() <= entity.getUpdatedAt()) {
-                // Server version is newer — skip but still return mapping
-                SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
-                m.setClientId(rec.getClientId());
-                m.setServerId(entity.getId());
-                mappings.add(m);
-                continue;
-            }
-
-            // Upsert fields (Last-Write-Wins: client sends a newer updatedAt)
-            entity.setAccountServerId(rec.getAccountServerId());
-            entity.setAmount(rec.getAmount());
-            entity.setDirection(rec.getDirection());
-            entity.setType(rec.getType());
-            entity.setTxStatus(rec.getTxStatus());
-            entity.setDescription(rec.getDescription());
-            entity.setMerchant(rec.getMerchant());
-            entity.setNote(rec.getNote());
-            entity.setTags(rec.getTags());
-            entity.setTxDate(rec.getTxDate());
-            entity.setCreatedAt(rec.getCreatedAt());
-            entity.setUpdatedAt(rec.getUpdatedAt() != null ? rec.getUpdatedAt() : now);
-            entity.setCategoryKey(rec.getCategoryKey());
-            entity.setDeleted(rec.isDeleted());
-            entity.setSmsHash(rec.getSmsHash());
-
-            entity = txRepo.save(entity);
-
-            SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
-            m.setClientId(rec.getClientId());
-            m.setServerId(entity.getId());
-            mappings.add(m);
+            SyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
+            if (m != null) mappings.add(m);
         }
 
         redis.opsForValue().set(SYNC_TS_PREFIX + userId,
@@ -81,6 +45,64 @@ public class SyncService {
         resp.setIdMappings(mappings);
         resp.setServerTimestamp(now);
         return resp;
+    }
+
+    /**
+     * Each record runs in its own REQUIRES_NEW transaction so a duplicate-key
+     * violation only rolls back that single record, not the entire push batch.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public SyncDto.ServerIdMapping upsertRecord(String userId, SyncDto.TransactionRecord rec, long now) {
+        SyncedTransaction entity = txRepo
+                .findByUserIdAndClientId(userId, rec.getClientId())
+                .orElse(null);
+
+        if (entity == null) {
+            entity = SyncedTransaction.builder()
+                    .userId(userId)
+                    .clientId(rec.getClientId())
+                    .build();
+        } else if (rec.getUpdatedAt() != null && rec.getUpdatedAt() <= entity.getUpdatedAt()) {
+            // Server version is newer — skip but still return mapping
+            SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
+            m.setClientId(rec.getClientId());
+            m.setServerId(entity.getId());
+            return m;
+        }
+
+        entity.setAccountServerId(rec.getAccountServerId());
+        entity.setAmount(rec.getAmount());
+        entity.setDirection(rec.getDirection());
+        entity.setType(rec.getType());
+        entity.setTxStatus(rec.getTxStatus());
+        entity.setDescription(rec.getDescription());
+        entity.setMerchant(rec.getMerchant());
+        entity.setNote(rec.getNote());
+        entity.setTags(rec.getTags());
+        entity.setTxDate(rec.getTxDate());
+        entity.setCreatedAt(rec.getCreatedAt());
+        entity.setUpdatedAt(rec.getUpdatedAt() != null ? rec.getUpdatedAt() : now);
+        entity.setCategoryKey(rec.getCategoryKey());
+        entity.setDeleted(rec.isDeleted());
+        entity.setSmsHash(rec.getSmsHash());
+
+        try {
+            entity = txRepo.save(entity);
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Duplicate push for clientId={} or smsHash={}, fetching existing record",
+                    rec.getClientId(), rec.getSmsHash());
+            entity = txRepo.findByUserIdAndClientId(userId, rec.getClientId())
+                    .or(() -> rec.getSmsHash() != null
+                            ? txRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash())
+                            : java.util.Optional.empty())
+                    .orElse(null);
+            if (entity == null) return null;
+        }
+
+        SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
+        m.setClientId(rec.getClientId());
+        m.setServerId(entity.getId());
+        return m;
     }
 
     // ── Pull ─────────────────────────────────────────────────────────────────
@@ -114,6 +136,15 @@ public class SyncService {
         resp.setTransactions(records);
         resp.setServerTimestamp(System.currentTimeMillis());
         return resp;
+    }
+
+    // ── Delete All ───────────────────────────────────────────────────────────
+
+    @Transactional
+    public void deleteAll(String userId) {
+        txRepo.deleteAllByUserId(userId);
+        redis.delete(SYNC_TS_PREFIX + userId);
+        log.info("Deleted all synced transactions for userId={}", userId);
     }
 
     // ── Status ────────────────────────────────────────────────────────────────
