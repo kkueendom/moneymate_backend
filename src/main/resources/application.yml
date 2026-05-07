@@ -41,9 +41,6 @@ app:
     expiry-seconds: 300                   # 5 minutes
     max-attempts: 3
 
-  rate-limit:
-    otp-per-minute: 3
-
   cors:
     allowed-origins:
       - "http://localhost:3000"

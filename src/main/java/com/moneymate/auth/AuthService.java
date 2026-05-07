@@ -4,8 +4,6 @@ import com.moneymate.common.BusinessException;
 import com.moneymate.config.JwtUtil;
 import com.moneymate.user.UserEntity;
 import com.moneymate.user.UserRepository;
-import io.github.bucket4j.Bandwidth;
-import io.github.bucket4j.Bucket;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,10 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
-import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -44,16 +40,18 @@ public class AuthService {
     @Value("${app.jwt.refresh-token-expiry-days}")
     private long refreshTokenExpiryDays;
 
-    @Value("${app.rate-limit.otp-per-minute}")
-    private int otpPerMinute;
-
-    private final Map<String, Bucket> ipBuckets = new ConcurrentHashMap<>();
+    // OTP send limits: 5 per minute per IP, 3 per 10 minutes per phone number
+    private static final int   OTP_IP_LIMIT        = 5;
+    private static final long  OTP_IP_WINDOW_SEC   = 60;
+    private static final int   OTP_PHONE_LIMIT     = 3;
+    private static final long  OTP_PHONE_WINDOW_SEC = 600;
 
     // ── Register ──────────────────────────────────────────────────────────────
 
     @Transactional
     public void register(AuthDto.RegisterRequest req, String clientIp) {
-        checkOtpRateLimit(clientIp);
+        checkOtpRateLimit("otp:ip:" + clientIp, OTP_IP_LIMIT, OTP_IP_WINDOW_SEC);
+        checkOtpRateLimit("otp:phone:" + req.getPhone(), OTP_PHONE_LIMIT, OTP_PHONE_WINDOW_SEC);
 
         if (userRepository.existsByPhone(req.getPhone())) {
             throw BusinessException.badRequest("Phone already registered");
@@ -162,16 +160,13 @@ public class AuthService {
         redis.delete(triesKey);
     }
 
-    private void checkOtpRateLimit(String clientIp) {
-        Bucket bucket = ipBuckets.computeIfAbsent(clientIp, ip ->
-                Bucket.builder()
-                        .addLimit(Bandwidth.builder()
-                                .capacity(otpPerMinute)
-                                .refillGreedy(otpPerMinute, Duration.ofMinutes(1))
-                                .build())
-                        .build());
-
-        if (!bucket.tryConsume(1)) {
+    // Redis INCR + EXPIRE rate limiter — works across restarts and multiple instances
+    private void checkOtpRateLimit(String key, int limit, long windowSeconds) {
+        Long count = redis.opsForValue().increment(key);
+        if (count != null && count == 1) {
+            redis.expire(key, Duration.ofSeconds(windowSeconds));
+        }
+        if (count != null && count > limit) {
             throw BusinessException.tooManyRequests("Too many OTP requests, please wait");
         }
     }
