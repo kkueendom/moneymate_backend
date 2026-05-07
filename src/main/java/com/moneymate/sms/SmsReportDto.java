@@ -17,5 +17,6 @@ public class SmsReportDto {
         private long timestamp;
         private String classifiedAs;   // LEDGER / BILL / LOAN / UDHAR
         private Double amount;
+        private String body;
     }
 }

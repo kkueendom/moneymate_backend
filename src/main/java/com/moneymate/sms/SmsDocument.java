@@ -30,5 +30,6 @@ public class SmsDocument {
     private long   timestamp;
     private String classifiedAs;
     private Double amount;
+    private String body;
     private LocalDateTime receivedAt;
 }

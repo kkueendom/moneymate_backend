@@ -12,6 +12,10 @@ public class SmsService {
 
     private final SmsRepository smsRepository;
 
+    public void deleteAll(String userId) {
+        smsRepository.deleteAllByUserId(userId);
+    }
+
     public int report(String userId, SmsReportDto.ReportRequest req) {
         List<SmsDocument> toSave = req.getEntries().stream()
                 .filter(e -> !smsRepository.existsBySmsHash(e.getSmsHash()))
@@ -22,6 +26,7 @@ public class SmsService {
                         .timestamp(e.getTimestamp())
                         .classifiedAs(e.getClassifiedAs())
                         .amount(e.getAmount())
+                        .body(e.getBody())
                         .receivedAt(LocalDateTime.now())
                         .build())
                 .toList();

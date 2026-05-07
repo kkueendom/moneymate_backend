@@ -15,6 +15,13 @@ public class SmsController {
 
     private final SmsService smsService;
 
+    @DeleteMapping("/deleteAll")
+    public ResponseEntity<ApiResponse<Void>> deleteAll(
+            @AuthenticationPrincipal String userId) {
+        smsService.deleteAll(userId);
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
     @PostMapping("/report")
     public ResponseEntity<ApiResponse<Map<String, Integer>>> report(
             @AuthenticationPrincipal String userId,
