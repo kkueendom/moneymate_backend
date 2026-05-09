@@ -24,8 +24,10 @@ public class UdharSyncController {
     @GetMapping("/pull")
     public ResponseEntity<ApiResponse<UdharSyncDto.PullResponse>> pull(
             @AuthenticationPrincipal String userId,
-            @RequestParam(defaultValue = "0") long since) {
-        return ResponseEntity.ok(ApiResponse.ok(udharSyncService.pull(userId, since)));
+            @RequestParam(defaultValue = "0") long since,
+            @RequestParam(defaultValue = "200") int limit,
+            @RequestParam(defaultValue = "0") int page) {
+        return ResponseEntity.ok(ApiResponse.ok(udharSyncService.pull(userId, since, limit, page)));
     }
 
     @DeleteMapping("/deleteAll")

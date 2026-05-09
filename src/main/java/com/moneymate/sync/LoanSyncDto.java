@@ -48,5 +48,6 @@ public class LoanSyncDto {
     public static class PullResponse {
         private List<LoanRecord> loans;
         private long serverTimestamp;
+        private boolean hasMore;
     }
 }

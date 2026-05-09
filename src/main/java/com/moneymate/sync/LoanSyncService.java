@@ -3,6 +3,9 @@ package com.moneymate.sync;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -97,8 +100,10 @@ public class LoanSyncService {
 
     // ── Pull ─────────────────────────────────────────────────────────────────
 
-    public LoanSyncDto.PullResponse pull(String userId, long since) {
-        List<SyncedLoan> rows = loanRepo.findByUserIdAndUpdatedAtGreaterThan(userId, since);
+    public LoanSyncDto.PullResponse pull(String userId, long since, int limit, int page) {
+        PageRequest pageable = PageRequest.of(page, limit, Sort.by("updatedAt").ascending());
+        Page<SyncedLoan> result = loanRepo.findByUserIdAndUpdatedAtGreaterThan(userId, since, pageable);
+        List<SyncedLoan> rows = result.getContent();
 
         List<LoanSyncDto.LoanRecord> records = rows.stream().map(e -> {
             LoanSyncDto.LoanRecord r = new LoanSyncDto.LoanRecord();
@@ -124,6 +129,7 @@ public class LoanSyncService {
         LoanSyncDto.PullResponse resp = new LoanSyncDto.PullResponse();
         resp.setLoans(records);
         resp.setServerTimestamp(System.currentTimeMillis());
+        resp.setHasMore(result.hasNext());
         return resp;
     }
 

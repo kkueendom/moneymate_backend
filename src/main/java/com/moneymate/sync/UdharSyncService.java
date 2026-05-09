@@ -3,6 +3,9 @@ package com.moneymate.sync;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -97,8 +100,10 @@ public class UdharSyncService {
 
     // ── Pull ─────────────────────────────────────────────────────────────────
 
-    public UdharSyncDto.PullResponse pull(String userId, long since) {
-        List<SyncedUdhar> rows = udharRepo.findByUserIdAndUpdatedAtGreaterThan(userId, since);
+    public UdharSyncDto.PullResponse pull(String userId, long since, int limit, int page) {
+        PageRequest pageable = PageRequest.of(page, limit, Sort.by("updatedAt").ascending());
+        Page<SyncedUdhar> result = udharRepo.findByUserIdAndUpdatedAtGreaterThan(userId, since, pageable);
+        List<SyncedUdhar> rows = result.getContent();
 
         List<UdharSyncDto.UdharRecord> records = rows.stream().map(e -> {
             UdharSyncDto.UdharRecord r = new UdharSyncDto.UdharRecord();
@@ -124,6 +129,7 @@ public class UdharSyncService {
         UdharSyncDto.PullResponse resp = new UdharSyncDto.PullResponse();
         resp.setUdhars(records);
         resp.setServerTimestamp(System.currentTimeMillis());
+        resp.setHasMore(result.hasNext());
         return resp;
     }
 

@@ -48,5 +48,6 @@ public class UdharSyncDto {
     public static class PullResponse {
         private List<UdharRecord> udhars;
         private long serverTimestamp;
+        private boolean hasMore;
     }
 }

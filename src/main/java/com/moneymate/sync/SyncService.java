@@ -7,6 +7,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.transaction.annotation.Propagation;
 
 import java.time.Duration;
@@ -107,8 +110,10 @@ public class SyncService {
 
     // ── Pull ─────────────────────────────────────────────────────────────────
 
-    public SyncDto.PullResponse pull(String userId, long since) {
-        List<SyncedTransaction> rows = txRepo.findByUserIdAndUpdatedAtGreaterThan(userId, since);
+    public SyncDto.PullResponse pull(String userId, long since, int limit, int page) {
+        PageRequest pageable = PageRequest.of(page, limit, Sort.by("updatedAt").ascending());
+        Page<SyncedTransaction> result = txRepo.findByUserIdAndUpdatedAtGreaterThan(userId, since, pageable);
+        List<SyncedTransaction> rows = result.getContent();
 
         List<SyncDto.TransactionRecord> records = rows.stream().map(e -> {
             SyncDto.TransactionRecord r = new SyncDto.TransactionRecord();
@@ -135,6 +140,7 @@ public class SyncService {
         SyncDto.PullResponse resp = new SyncDto.PullResponse();
         resp.setTransactions(records);
         resp.setServerTimestamp(System.currentTimeMillis());
+        resp.setHasMore(result.hasNext());
         return resp;
     }
 

@@ -49,6 +49,7 @@ public class SyncDto {
     public static class PullResponse {
         private List<TransactionRecord> transactions;
         private long serverTimestamp;
+        private boolean hasMore;
     }
 
     @Data
