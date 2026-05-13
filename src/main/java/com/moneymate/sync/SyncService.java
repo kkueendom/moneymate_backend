@@ -65,16 +65,13 @@ public class SyncService {
         //    This happens when the user logs out, Room is cleared, and re-imports the
         //    same SMS (new clientIds, same smsHash).
         if (entity == null && rec.getSmsHash() != null) {
-            entity = txRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash()).orElse(null);
-            if (entity != null) {
-                log.debug("Re-login dedup: smsHash={} already exists, remapping clientId {} -> serverId {}",
-                        rec.getSmsHash(), rec.getClientId(), entity.getId());
-                // Update clientId to the new local ID so (userId, clientId) index stays current
-                entity.setClientId(rec.getClientId());
-                entity = txRepo.save(entity);
+            SyncedTransaction existing = txRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash()).orElse(null);
+            if (existing != null) {
+                log.debug("Re-login dedup: smsHash={} already exists, returning serverId for clientId {}",
+                        rec.getSmsHash(), rec.getClientId());
                 SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
                 m.setClientId(rec.getClientId());
-                m.setServerId(entity.getId());
+                m.setServerId(existing.getId());
                 return m;
             }
         }
