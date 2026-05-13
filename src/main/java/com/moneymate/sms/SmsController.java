@@ -6,8 +6,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
 @RestController
 @RequestMapping("/api/v2/sms")
 @RequiredArgsConstructor
@@ -23,10 +21,9 @@ public class SmsController {
     }
 
     @PostMapping("/report")
-    public ResponseEntity<ApiResponse<Map<String, Integer>>> report(
+    public ResponseEntity<ApiResponse<SmsReportDto.ReportResult>> report(
             @AuthenticationPrincipal String userId,
             @RequestBody SmsReportDto.ReportRequest req) {
-        int saved = smsService.report(userId, req);
-        return ResponseEntity.ok(ApiResponse.ok(Map.of("saved", saved)));
+        return ResponseEntity.ok(ApiResponse.ok(smsService.report(userId, req)));
     }
 }
