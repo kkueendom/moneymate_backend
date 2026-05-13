@@ -5,7 +5,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import java.util.List;
 
 public interface SmsRepository extends MongoRepository<SmsDocument, String> {
-    boolean existsBySmsHash(String smsHash);
+    boolean existsBySmsHashAndUserId(String smsHash, String userId);
     List<SmsDocument> findByUserId(String userId);
     void deleteAllByUserId(String userId);
 }

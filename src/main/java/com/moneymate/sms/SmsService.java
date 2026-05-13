@@ -25,7 +25,7 @@ public class SmsService {
         List<SmsReportDto.FailedEntry> failed = new ArrayList<>();
 
         for (SmsReportDto.SmsEntry e : req.getEntries()) {
-            if (smsRepository.existsBySmsHash(e.getSmsHash())) {
+            if (smsRepository.existsBySmsHashAndUserId(e.getSmsHash(), userId)) {
                 skipped++;
                 continue;
             }
