@@ -13,7 +13,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -21,10 +24,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final String OTP_PREFIX      = "otp:";
-    private static final String OTP_TRIES       = "otp_tries:";
-    private static final String PENDING_PREFIX  = "pending:";
-    private static final String REFRESH_PREFIX  = "refresh:";
+    private static final String OTP_PREFIX          = "otp:";
+    private static final String OTP_TRIES           = "otp_tries:";
+    private static final String PENDING_PREFIX      = "pending:";
+    private static final String REFRESH_PREFIX      = "refresh:";
+    private static final String REFRESH_SET_PREFIX  = "refresh_set:";
 
     private final UserRepository userRepository;
     private final StringRedisTemplate redis;
@@ -118,6 +122,8 @@ public class AuthService {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.unauthorized("User not found"));
 
+        // Remove the consumed token from the set before buildTokens clears the rest
+        redis.opsForSet().remove(REFRESH_SET_PREFIX + userId, req.getRefreshToken());
         redis.delete(REFRESH_PREFIX + req.getRefreshToken());
         return buildTokens(user);
     }
@@ -125,7 +131,11 @@ public class AuthService {
     // ── Logout ────────────────────────────────────────────────────────────────
 
     public void logout(String refreshToken) {
+        String userId = redis.opsForValue().get(REFRESH_PREFIX + refreshToken);
         redis.delete(REFRESH_PREFIX + refreshToken);
+        if (userId != null) {
+            redis.opsForSet().remove(REFRESH_SET_PREFIX + userId, refreshToken);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -172,12 +182,24 @@ public class AuthService {
     }
 
     private AuthDto.TokenResponse buildTokens(UserEntity user) {
+        // Invalidate all existing refresh tokens for this user before issuing a new one
+        String setKey = REFRESH_SET_PREFIX + user.getId();
+        Set<String> oldTokens = redis.opsForSet().members(setKey);
+        if (oldTokens != null && !oldTokens.isEmpty()) {
+            List<String> keysToDelete = new ArrayList<>();
+            oldTokens.forEach(t -> keysToDelete.add(REFRESH_PREFIX + t));
+            keysToDelete.add(setKey);
+            redis.delete(keysToDelete);
+        }
+
         String accessToken  = jwtUtil.generateAccessToken(user.getId(), user.getPhone());
         String refreshToken = UUID.randomUUID().toString();
         redis.opsForValue().set(
                 REFRESH_PREFIX + refreshToken,
                 user.getId(),
                 Duration.ofDays(refreshTokenExpiryDays));
+        redis.opsForSet().add(setKey, refreshToken);
+        redis.expire(setKey, Duration.ofDays(refreshTokenExpiryDays));
 
         AuthDto.TokenResponse resp = new AuthDto.TokenResponse();
         resp.setAccessToken(accessToken);
