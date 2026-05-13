@@ -2,7 +2,6 @@ package com.moneymate.sync;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,10 +55,31 @@ public class SyncService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public SyncDto.ServerIdMapping upsertRecord(String userId, SyncDto.TransactionRecord rec, long now) {
+        // 1. Look up by (userId, clientId) — normal path
         SyncedTransaction entity = txRepo
                 .findByUserIdAndClientId(userId, rec.getClientId())
                 .orElse(null);
 
+        // 2. Not found by clientId — check smsHash BEFORE attempting INSERT to avoid
+        //    DataIntegrityViolationException that corrupts the Hibernate Session.
+        //    This happens when the user logs out, Room is cleared, and re-imports the
+        //    same SMS (new clientIds, same smsHash).
+        if (entity == null && rec.getSmsHash() != null) {
+            entity = txRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash()).orElse(null);
+            if (entity != null) {
+                log.debug("Re-login dedup: smsHash={} already exists, remapping clientId {} -> serverId {}",
+                        rec.getSmsHash(), rec.getClientId(), entity.getId());
+                // Update clientId to the new local ID so (userId, clientId) index stays current
+                entity.setClientId(rec.getClientId());
+                entity = txRepo.save(entity);
+                SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
+                m.setClientId(rec.getClientId());
+                m.setServerId(entity.getId());
+                return m;
+            }
+        }
+
+        // 3. Truly new record — build entity
         if (entity == null) {
             entity = SyncedTransaction.builder()
                     .userId(userId)
@@ -89,18 +109,7 @@ public class SyncService {
         entity.setDeleted(rec.isDeleted());
         entity.setSmsHash(rec.getSmsHash());
 
-        try {
-            entity = txRepo.save(entity);
-        } catch (DataIntegrityViolationException e) {
-            log.warn("Duplicate push for clientId={} or smsHash={}, fetching existing record",
-                    rec.getClientId(), rec.getSmsHash());
-            entity = txRepo.findByUserIdAndClientId(userId, rec.getClientId())
-                    .or(() -> rec.getSmsHash() != null
-                            ? txRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash())
-                            : java.util.Optional.empty())
-                    .orElse(null);
-            if (entity == null) return null;
-        }
+        entity = txRepo.save(entity);
 
         SyncDto.ServerIdMapping m = new SyncDto.ServerIdMapping();
         m.setClientId(rec.getClientId());
