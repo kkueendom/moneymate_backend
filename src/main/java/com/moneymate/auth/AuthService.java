@@ -12,10 +12,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 
@@ -140,13 +140,15 @@ public class AuthService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
     private void sendOtp(String phone) {
-        String otp = String.format("%06d", new Random().nextInt(1_000_000));
+        String otp = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
         redis.opsForValue().set(OTP_PREFIX + phone, otp, Duration.ofSeconds(otpExpirySeconds));
         redis.delete(OTP_TRIES + phone);
 
         // TODO: integrate Twilio / Jazz SMS
-        log.info("[DEV] OTP for {}: {}", phone, otp);
+        log.debug("[DEV] OTP generated for phone ending in ...{}", phone.length() > 4 ? phone.substring(phone.length() - 4) : "****");
     }
 
     private void validateOtp(String phone, String otp) {

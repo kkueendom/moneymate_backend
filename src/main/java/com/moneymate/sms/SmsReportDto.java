@@ -1,5 +1,10 @@
 package com.moneymate.sms;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -9,17 +14,19 @@ public class SmsReportDto {
 
     @Data
     public static class ReportRequest {
-        private List<SmsEntry> entries;
+        @NotNull
+        @Size(max = 500, message = "Batch size cannot exceed 500 entries")
+        private List<@Valid SmsEntry> entries;
     }
 
     @Data
     public static class SmsEntry {
-        private String smsHash;
-        private String sender;
+        @NotBlank @Size(max = 64)  private String smsHash;
+        @NotBlank @Size(max = 30)  private String sender;
         private long timestamp;
-        private String classifiedAs;   // LEDGER / BILL / LOAN / UDHAR
-        private Double amount;
-        private String body;
+        @NotBlank @Size(max = 20)  private String classifiedAs;
+        @DecimalMin("0")           private Double amount;
+        @Size(max = 500)           private String body;
     }
 
     @Data

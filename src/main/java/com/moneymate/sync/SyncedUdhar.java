@@ -9,6 +9,8 @@ import org.hibernate.annotations.UuidGenerator;
 
 @Entity
 @Table(name = "synced_udhars", indexes = {
+        @Index(name = "idx_su_user_id",      columnList = "user_id"),
+        @Index(name = "idx_su_deleted",      columnList = "is_deleted"),
         @Index(name = "idx_su_user_updated", columnList = "user_id, updated_at"),
         @Index(name = "idx_su_user_client",  columnList = "user_id, client_id", unique = true),
         @Index(name = "idx_su_user_sms",     columnList = "user_id, sms_hash",  unique = true)

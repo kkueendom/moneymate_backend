@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -24,8 +26,18 @@ public class SmsService {
         int skipped = 0;
         List<SmsReportDto.FailedEntry> failed = new ArrayList<>();
 
+        // Batch dedup: one query for all incoming hashes instead of N individual queries
+        List<String> incomingHashes = req.getEntries().stream()
+                .map(SmsReportDto.SmsEntry::getSmsHash)
+                .collect(Collectors.toList());
+        Set<String> existingHashes = smsRepository
+                .findHashesByUserIdAndSmsHashIn(userId, incomingHashes)
+                .stream()
+                .map(SmsDocument::getSmsHash)
+                .collect(Collectors.toSet());
+
         for (SmsReportDto.SmsEntry e : req.getEntries()) {
-            if (smsRepository.existsBySmsHashAndUserId(e.getSmsHash(), userId)) {
+            if (existingHashes.contains(e.getSmsHash())) {
                 skipped++;
                 continue;
             }
