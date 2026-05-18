@@ -25,18 +25,25 @@ public class UdharSyncService {
 
     public UdharSyncDto.PushResponse push(String userId, UdharSyncDto.PushRequest req) {
         List<UdharSyncDto.ServerIdMapping> mappings = new ArrayList<>();
+        List<Long> failedClientIds = new ArrayList<>();
         long now = System.currentTimeMillis();
 
         List<UdharSyncDto.UdharRecord> records =
                 req.getUdhars() != null ? req.getUdhars() : Collections.emptyList();
 
         for (UdharSyncDto.UdharRecord rec : records) {
-            UdharSyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
-            if (m != null) mappings.add(m);
+            try {
+                UdharSyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
+                if (m != null) mappings.add(m);
+            } catch (Exception e) {
+                log.error("Failed to upsert udhar clientId={} for userId={}", rec.getClientId(), userId, e);
+                failedClientIds.add(rec.getClientId());
+            }
         }
 
         UdharSyncDto.PushResponse resp = new UdharSyncDto.PushResponse();
         resp.setIdMappings(mappings);
+        resp.setFailedClientIds(failedClientIds.isEmpty() ? null : failedClientIds);
         resp.setServerTimestamp(now);
         return resp;
     }

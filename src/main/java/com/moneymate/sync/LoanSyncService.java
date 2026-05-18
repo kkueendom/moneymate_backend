@@ -25,18 +25,25 @@ public class LoanSyncService {
 
     public LoanSyncDto.PushResponse push(String userId, LoanSyncDto.PushRequest req) {
         List<LoanSyncDto.ServerIdMapping> mappings = new ArrayList<>();
+        List<Long> failedClientIds = new ArrayList<>();
         long now = System.currentTimeMillis();
 
         List<LoanSyncDto.LoanRecord> records =
                 req.getLoans() != null ? req.getLoans() : Collections.emptyList();
 
         for (LoanSyncDto.LoanRecord rec : records) {
-            LoanSyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
-            if (m != null) mappings.add(m);
+            try {
+                LoanSyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
+                if (m != null) mappings.add(m);
+            } catch (Exception e) {
+                log.error("Failed to upsert loan clientId={} for userId={}", rec.getClientId(), userId, e);
+                failedClientIds.add(rec.getClientId());
+            }
         }
 
         LoanSyncDto.PushResponse resp = new LoanSyncDto.PushResponse();
         resp.setIdMappings(mappings);
+        resp.setFailedClientIds(failedClientIds.isEmpty() ? null : failedClientIds);
         resp.setServerTimestamp(now);
         return resp;
     }

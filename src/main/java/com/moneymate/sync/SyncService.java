@@ -32,14 +32,20 @@ public class SyncService {
 
     public SyncDto.PushResponse push(String userId, SyncDto.PushRequest req) {
         List<SyncDto.ServerIdMapping> mappings = new ArrayList<>();
+        List<Long> failedClientIds = new ArrayList<>();
         long now = System.currentTimeMillis();
 
         List<SyncDto.TransactionRecord> records =
                 req.getTransactions() != null ? req.getTransactions() : Collections.emptyList();
 
         for (SyncDto.TransactionRecord rec : records) {
-            SyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
-            if (m != null) mappings.add(m);
+            try {
+                SyncDto.ServerIdMapping m = upsertRecord(userId, rec, now);
+                if (m != null) mappings.add(m);
+            } catch (Exception e) {
+                log.error("Failed to upsert transaction clientId={} for userId={}", rec.getClientId(), userId, e);
+                failedClientIds.add(rec.getClientId());
+            }
         }
 
         redis.opsForValue().set(SYNC_TS_PREFIX + userId,
@@ -47,6 +53,7 @@ public class SyncService {
 
         SyncDto.PushResponse resp = new SyncDto.PushResponse();
         resp.setIdMappings(mappings);
+        resp.setFailedClientIds(failedClientIds.isEmpty() ? null : failedClientIds);
         resp.setServerTimestamp(now);
         return resp;
     }

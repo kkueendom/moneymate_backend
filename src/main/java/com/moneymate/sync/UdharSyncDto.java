@@ -41,6 +41,7 @@ public class UdharSyncDto {
     @Data
     public static class PushResponse {
         private List<ServerIdMapping> idMappings;
+        private List<Long> failedClientIds;
         private long serverTimestamp;
     }
 
