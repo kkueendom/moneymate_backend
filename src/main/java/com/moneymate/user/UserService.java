@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Slf4j
 @Service
@@ -48,13 +50,21 @@ public class UserService {
         user.setAvatarUrl(null);
         userRepository.save(user);
 
-        // MongoDB is a separate data source — cannot join the MySQL transaction.
-        // Best-effort: log and alert on failure; ops can re-run manually if needed.
-        try {
-            smsService.deleteAll(userId);
-        } catch (Exception e) {
-            log.error("Failed to delete SMS records for userId={} — manual cleanup required", userId, e);
-        }
+        // MongoDB cannot join the MySQL transaction. Register a post-commit hook so
+        // SMS records are only deleted after MySQL successfully commits — preventing
+        // the inconsistency where MongoDB is cleaned but MySQL later rolls back.
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        smsService.deleteAll(userId);
+                    } catch (Exception e) {
+                        log.error("SMS cleanup failed for userId={} — manual cleanup required", userId, e);
+                    }
+                }
+            }
+        );
     }
 
     private UserEntity findUser(String userId) {

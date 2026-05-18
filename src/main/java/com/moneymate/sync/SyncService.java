@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -155,7 +157,15 @@ public class SyncService {
     @Transactional
     public void deleteAll(String userId) {
         txRepo.deleteAllByUserId(userId);
-        redis.delete(SYNC_TS_PREFIX + userId);
+        // Redis is not transactional — delete only after MySQL commits successfully
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    redis.delete(SYNC_TS_PREFIX + userId);
+                }
+            }
+        );
         log.info("Deleted all synced transactions for userId={}", userId);
     }
 
