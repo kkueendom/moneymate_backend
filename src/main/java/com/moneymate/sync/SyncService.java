@@ -69,7 +69,22 @@ public class SyncService {
                 .findByUserIdAndClientId(userId, rec.getClientId())
                 .orElse(null);
 
-        // 2. Not found by clientId — check smsHash BEFORE attempting INSERT to avoid
+        // 2. Not found by clientId — check serverId next.
+        //    After logout+login, Room is cleared and pulled records get new local IDs.
+        //    When the user edits such a record, the push sends the new clientId but still
+        //    carries the original serverId — use it to find and update the existing record
+        //    instead of creating a duplicate.
+        if (entity == null && rec.getServerId() != null) {
+            SyncedTransaction byServerId = txRepo.findById(rec.getServerId()).orElse(null);
+            if (byServerId != null && byServerId.getUserId().equals(userId)) {
+                log.debug("Re-login clientId migration: serverId={} found, updating clientId {} -> {}",
+                        rec.getServerId(), byServerId.getClientId(), rec.getClientId());
+                byServerId.setClientId(rec.getClientId()); // adopt new device's local ID
+                entity = byServerId;
+            }
+        }
+
+        // 3. Not found by clientId or serverId — check smsHash BEFORE attempting INSERT to avoid
         //    DataIntegrityViolationException that corrupts the Hibernate Session.
         //    This happens when the user logs out, Room is cleared, and re-imports the
         //    same SMS (new clientIds, same smsHash).

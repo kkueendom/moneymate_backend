@@ -2,7 +2,6 @@ package com.moneymate.sync;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -54,10 +53,41 @@ public class UdharSyncService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public UdharSyncDto.ServerIdMapping upsertRecord(String userId, UdharSyncDto.UdharRecord rec, long now) {
+        // 1. Look up by (userId, clientId) — normal path
         SyncedUdhar entity = udharRepo
                 .findByUserIdAndClientId(userId, rec.getClientId())
                 .orElse(null);
 
+        // 2. Not found by clientId — check serverId next.
+        //    After logout+login, Room is cleared and pulled records get new local IDs.
+        //    When the user edits such a record, the push sends the new clientId but still
+        //    carries the original serverId — use it to find and update the existing record
+        //    instead of creating a duplicate.
+        if (entity == null && rec.getServerId() != null) {
+            SyncedUdhar byServerId = udharRepo.findById(rec.getServerId()).orElse(null);
+            if (byServerId != null && byServerId.getUserId().equals(userId)) {
+                log.debug("Re-login clientId migration: serverId={} found, updating clientId {} -> {}",
+                        rec.getServerId(), byServerId.getClientId(), rec.getClientId());
+                byServerId.setClientId(rec.getClientId());
+                entity = byServerId;
+            }
+        }
+
+        // 3. Not found by clientId or serverId — dedup by smsHash to avoid a stale-import
+        //    creating a second record for the same SMS after logout+login.
+        if (entity == null && rec.getSmsHash() != null) {
+            SyncedUdhar existing = udharRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash()).orElse(null);
+            if (existing != null) {
+                log.debug("Re-login dedup: smsHash={} already exists, returning serverId for clientId {}",
+                        rec.getSmsHash(), rec.getClientId());
+                UdharSyncDto.ServerIdMapping m = new UdharSyncDto.ServerIdMapping();
+                m.setClientId(rec.getClientId());
+                m.setServerId(existing.getId());
+                return m;
+            }
+        }
+
+        // 4. Truly new record
         if (entity == null) {
             entity = SyncedUdhar.builder()
                     .userId(userId)
@@ -86,18 +116,7 @@ public class UdharSyncService {
         entity.setDeleted(rec.isDeleted());
         entity.setSmsHash(rec.getSmsHash());
 
-        try {
-            entity = udharRepo.save(entity);
-        } catch (DataIntegrityViolationException e) {
-            log.warn("Duplicate push for udhar clientId={} or smsHash={}, fetching existing record",
-                    rec.getClientId(), rec.getSmsHash());
-            entity = udharRepo.findByUserIdAndClientId(userId, rec.getClientId())
-                    .or(() -> rec.getSmsHash() != null
-                            ? udharRepo.findByUserIdAndSmsHash(userId, rec.getSmsHash())
-                            : java.util.Optional.empty())
-                    .orElse(null);
-            if (entity == null) return null;
-        }
+        entity = udharRepo.save(entity);
 
         UdharSyncDto.ServerIdMapping m = new UdharSyncDto.ServerIdMapping();
         m.setClientId(rec.getClientId());
