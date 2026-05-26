@@ -43,6 +43,7 @@ public class AuthService {
      */
     private static final String BUILD_TOKENS_SCRIPT = """
         local oldTokens = redis.call('SMEMBERS', KEYS[1])
+        local count = #oldTokens
         for _, t in ipairs(oldTokens) do
             redis.call('DEL', ARGV[1] .. t)
         end
@@ -50,7 +51,7 @@ public class AuthService {
         redis.call('SET', ARGV[2], ARGV[3], 'EX', ARGV[4])
         redis.call('SADD', KEYS[1], ARGV[5])
         redis.call('EXPIRE', KEYS[1], ARGV[4])
-        return 1
+        return count
         """;
 
     private final UserRepository userRepository;
@@ -235,7 +236,7 @@ public class AuthService {
         long expirySec = Duration.ofDays(refreshTokenExpiryDays).getSeconds();
 
         DefaultRedisScript<Long> script = new DefaultRedisScript<>(BUILD_TOKENS_SCRIPT, Long.class);
-        redis.execute(script,
+        Long terminated = redis.execute(script,
                 List.of(setKey),
                 REFRESH_PREFIX,
                 REFRESH_PREFIX + newRefreshToken,
@@ -252,6 +253,7 @@ public class AuthService {
         resp.setUserId(user.getId());
         resp.setPhone(user.getPhone());
         resp.setName(user.getName());
+        resp.setOtherSessionsTerminated(terminated != null && terminated > 0);
         return resp;
     }
 }

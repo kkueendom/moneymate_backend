@@ -53,5 +53,6 @@ public class AuthDto {
         private String userId;
         private String phone;
         private String name;
+        private boolean otherSessionsTerminated;
     }
 }
