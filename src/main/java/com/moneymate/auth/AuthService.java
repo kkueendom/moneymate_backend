@@ -12,11 +12,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+
 import java.security.SecureRandom;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -29,6 +29,28 @@ public class AuthService {
     private static final String PENDING_PREFIX      = "pending:";
     private static final String REFRESH_PREFIX      = "refresh:";
     private static final String REFRESH_SET_PREFIX  = "refresh_set:";
+    private static final String JWT_BLACKLIST_PREFIX = "jwt_bl:";
+
+    /**
+     * Atomically: delete all old refresh tokens for this user, then insert the new one.
+     * KEYS[1] = refresh_set:{userId}
+     * ARGV[1] = "refresh:" prefix
+     * ARGV[2] = full new token key (refresh:{newToken})
+     * ARGV[3] = userId (value stored under the new key)
+     * ARGV[4] = TTL in seconds
+     * ARGV[5] = newToken (without prefix, added to the set)
+     */
+    private static final String BUILD_TOKENS_SCRIPT = """
+        local oldTokens = redis.call('SMEMBERS', KEYS[1])
+        for _, t in ipairs(oldTokens) do
+            redis.call('DEL', ARGV[1] .. t)
+        end
+        redis.call('DEL', KEYS[1])
+        redis.call('SET', ARGV[2], ARGV[3], 'EX', ARGV[4])
+        redis.call('SADD', KEYS[1], ARGV[5])
+        redis.call('EXPIRE', KEYS[1], ARGV[4])
+        return 1
+        """;
 
     private final UserRepository userRepository;
     private final StringRedisTemplate redis;
@@ -130,11 +152,20 @@ public class AuthService {
 
     // ── Logout ────────────────────────────────────────────────────────────────
 
-    public void logout(String refreshToken) {
+    public void logout(String refreshToken, String accessToken) {
         String userId = redis.opsForValue().get(REFRESH_PREFIX + refreshToken);
         redis.delete(REFRESH_PREFIX + refreshToken);
         if (userId != null) {
             redis.opsForSet().remove(REFRESH_SET_PREFIX + userId, refreshToken);
+        }
+        // Blacklist the access token's jti so it cannot be used even before its natural expiry.
+        // JWT is stateless — without this, a stolen access token remains valid until TTL expires
+        // even after the user explicitly logs out.
+        if (accessToken != null && jwtUtil.isValid(accessToken)) {
+            String jti = jwtUtil.getJti(accessToken);
+            redis.opsForValue().set(
+                    JWT_BLACKLIST_PREFIX + jti, "1",
+                    Duration.ofMillis(jwtUtil.getAccessTokenExpiryMs()));
         }
     }
 
@@ -153,18 +184,21 @@ public class AuthService {
 
     private void validateOtp(String phone, String otp) {
         String triesKey = OTP_TRIES + phone;
-        String attempts = redis.opsForValue().get(triesKey);
-        if (attempts != null && Integer.parseInt(attempts) >= maxOtpAttempts) {
-            throw BusinessException.tooManyRequests("Too many OTP attempts, please request a new OTP");
-        }
 
         String stored = redis.opsForValue().get(OTP_PREFIX + phone);
         if (stored == null) {
             throw BusinessException.badRequest("OTP expired or not requested");
         }
         if (!stored.equals(otp)) {
-            redis.opsForValue().increment(triesKey);
+            // INCR is atomic — increment first, then inspect the result.
+            // Reading the counter before incrementing is a TOCTOU race: two concurrent wrong
+            // attempts can both read the same count, both pass the < maxAttempts check, and the
+            // counter under-counts by however many requests raced simultaneously.
+            Long attempts = redis.opsForValue().increment(triesKey);
             redis.expire(triesKey, Duration.ofSeconds(otpExpirySeconds));
+            if (attempts != null && attempts >= maxOtpAttempts) {
+                throw BusinessException.tooManyRequests("Too many OTP attempts, please request a new OTP");
+            }
             throw BusinessException.badRequest("Invalid OTP");
         }
 
@@ -184,28 +218,29 @@ public class AuthService {
     }
 
     private AuthDto.TokenResponse buildTokens(UserEntity user) {
-        // Invalidate all existing refresh tokens for this user before issuing a new one
+        // Use a Lua script to atomically delete all old refresh tokens and insert the new one.
+        // Without this, two concurrent logins can race: both read the old token set, both delete it,
+        // then both insert their own new token — the second insertion deletes the first's token,
+        // leaving the first device immediately logged out.
         String setKey = REFRESH_SET_PREFIX + user.getId();
-        Set<String> oldTokens = redis.opsForSet().members(setKey);
-        if (oldTokens != null && !oldTokens.isEmpty()) {
-            List<String> keysToDelete = new ArrayList<>();
-            oldTokens.forEach(t -> keysToDelete.add(REFRESH_PREFIX + t));
-            keysToDelete.add(setKey);
-            redis.delete(keysToDelete);
-        }
+        String newRefreshToken = UUID.randomUUID().toString();
+        long expirySec = Duration.ofDays(refreshTokenExpiryDays).getSeconds();
 
-        String accessToken  = jwtUtil.generateAccessToken(user.getId(), user.getPhone());
-        String refreshToken = UUID.randomUUID().toString();
-        redis.opsForValue().set(
-                REFRESH_PREFIX + refreshToken,
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>(BUILD_TOKENS_SCRIPT, Long.class);
+        redis.execute(script,
+                List.of(setKey),
+                REFRESH_PREFIX,
+                REFRESH_PREFIX + newRefreshToken,
                 user.getId(),
-                Duration.ofDays(refreshTokenExpiryDays));
-        redis.opsForSet().add(setKey, refreshToken);
-        redis.expire(setKey, Duration.ofDays(refreshTokenExpiryDays));
+                String.valueOf(expirySec),
+                newRefreshToken
+        );
+
+        String accessToken = jwtUtil.generateAccessToken(user.getId(), user.getPhone());
 
         AuthDto.TokenResponse resp = new AuthDto.TokenResponse();
         resp.setAccessToken(accessToken);
-        resp.setRefreshToken(refreshToken);
+        resp.setRefreshToken(newRefreshToken);
         resp.setUserId(user.getId());
         resp.setPhone(user.getPhone());
         resp.setName(user.getName());

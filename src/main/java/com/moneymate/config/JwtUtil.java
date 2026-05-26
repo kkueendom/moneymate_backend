@@ -55,4 +55,12 @@ public class JwtUtil {
     public String getSubject(String token) {
         return parseToken(token).getSubject();
     }
+
+    public String getJti(String token) {
+        return parseToken(token).getId();
+    }
+
+    public long getAccessTokenExpiryMs() {
+        return accessTokenExpiryMs;
+    }
 }

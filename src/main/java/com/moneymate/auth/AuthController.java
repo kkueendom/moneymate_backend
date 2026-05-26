@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.lang.Nullable;
+
 @RestController
 @RequestMapping("/api/v2/auth")
 @RequiredArgsConstructor
@@ -42,8 +44,15 @@ public class AuthController {
 
     @DeleteMapping("/logout")
     public ResponseEntity<ApiResponse<Void>> logout(
-            @Valid @RequestBody AuthDto.RefreshRequest req) {
-        authService.logout(req.getRefreshToken());
+            @Valid @RequestBody AuthDto.RefreshRequest req,
+            HttpServletRequest httpReq) {
+        // Extract access token from Authorization header so the server can blacklist its jti.
+        @Nullable String accessToken = null;
+        String authHeader = httpReq.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            accessToken = authHeader.substring(7);
+        }
+        authService.logout(req.getRefreshToken(), accessToken);
         return ResponseEntity.ok(ApiResponse.ok("Logged out", null));
     }
 }
