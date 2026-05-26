@@ -1,20 +1,19 @@
-package com.moneymate.auth;
+﻿package com.moneymate.auth;
 
 import com.moneymate.common.BusinessException;
 import com.moneymate.config.JwtUtil;
+import com.moneymate.infra.SmsGatewayClient;
 import com.moneymate.user.UserEntity;
 import com.moneymate.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.springframework.data.redis.core.script.DefaultRedisScript;
-
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -24,7 +23,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final String OTP_PREFIX          = "otp:";
+    // otp: prefix removed — OTP is now generated and stored by the SMS platform.
+    // We only keep a tokenId (otp_token:{phone}) that links send → verify calls.
+    private static final String OTP_TOKEN_PREFIX    = "otp_token:";
     private static final String OTP_TRIES           = "otp_tries:";
     private static final String PENDING_PREFIX      = "pending:";
     private static final String REFRESH_PREFIX      = "refresh:";
@@ -56,6 +57,7 @@ public class AuthService {
     private final StringRedisTemplate redis;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
+    private final SmsGatewayClient smsGatewayClient;
 
     @Value("${app.otp.expiry-seconds}")
     private long otpExpirySeconds;
@@ -169,40 +171,46 @@ public class AuthService {
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void sendOtp(String phone) {
-        String otp = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
-        redis.opsForValue().set(OTP_PREFIX + phone, otp, Duration.ofSeconds(otpExpirySeconds));
+        // Generate a tokenId that pairs the send and verify calls on the platform side.
+        // The platform generates the actual OTP digits and sends the SMS itself.
+        String tokenId = UUID.randomUUID().toString();
+        String flowNo  = UUID.randomUUID().toString(); // idempotency key
+
+        // Store tokenId in Redis so validateOtp() can retrieve it without re-querying.
+        redis.opsForValue().set(OTP_TOKEN_PREFIX + phone, tokenId, Duration.ofSeconds(otpExpirySeconds));
+        // Reset any leftover tries counter from a previous attempt.
         redis.delete(OTP_TRIES + phone);
 
-        // TODO: integrate Twilio / Jazz SMS
-        log.debug("[DEV] OTP generated for phone ending in ...{}", phone.length() > 4 ? phone.substring(phone.length() - 4) : "****");
+        smsGatewayClient.sendOtp(phone, tokenId, flowNo);
     }
 
-    private void validateOtp(String phone, String otp) {
+    private void validateOtp(String phone, String inputCode) {
         String triesKey = OTP_TRIES + phone;
 
-        String stored = redis.opsForValue().get(OTP_PREFIX + phone);
-        if (stored == null) {
+        // Retrieve the tokenId that was saved when the OTP was sent.
+        String tokenId = redis.opsForValue().get(OTP_TOKEN_PREFIX + phone);
+        if (tokenId == null) {
             throw BusinessException.badRequest("OTP expired or not requested");
         }
-        if (!stored.equals(otp)) {
-            // INCR is atomic — increment first, then inspect the result.
-            // Reading the counter before incrementing is a TOCTOU race: two concurrent wrong
-            // attempts can both read the same count, both pass the < maxAttempts check, and the
-            // counter under-counts by however many requests raced simultaneously.
-            Long attempts = redis.opsForValue().increment(triesKey);
-            redis.expire(triesKey, Duration.ofSeconds(otpExpirySeconds));
-            if (attempts != null && attempts >= maxOtpAttempts) {
-                throw BusinessException.tooManyRequests("Too many OTP attempts, please request a new OTP");
-            }
+
+        // INCR atomically before asking the platform — prevents concurrent wrong attempts
+        // from all reading the same old counter value and all slipping through the limit check.
+        Long attempts = redis.opsForValue().increment(triesKey);
+        redis.expire(triesKey, Duration.ofSeconds(otpExpirySeconds));
+        if (attempts != null && attempts > maxOtpAttempts) {
+            throw BusinessException.tooManyRequests("Too many OTP attempts, please request a new OTP");
+        }
+
+        boolean passed = smsGatewayClient.verifyOtp(phone, tokenId, inputCode);
+        if (!passed) {
             throw BusinessException.badRequest("Invalid OTP");
         }
 
-        redis.delete(OTP_PREFIX + phone);
+        // Verification passed — clean up.
+        redis.delete(OTP_TOKEN_PREFIX + phone);
         redis.delete(triesKey);
     }
 

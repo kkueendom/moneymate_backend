@@ -41,6 +41,11 @@ app:
     expiry-seconds: 300                   # 5 minutes
     max-attempts: 3
 
+  sms:
+    gateway-url: ${SMS_GATEWAY_URL:http://message-platform.internal}
+    caller-id: ${SMS_CALLER_ID:0}         # assigned when template is approved
+    template-code: ${SMS_TEMPLATE_CODE:moneymate_otp}
+
   cors:
     allowed-origins:
       - "http://localhost:3000"
