@@ -1,7 +1,9 @@
 package com.moneymate.config;
 
+import com.moneymate.infra.IdempotencyFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -23,7 +25,8 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtAuthFilter jwtAuthFilter;
+    private final JwtAuthFilter      jwtAuthFilter;
+    private final IdempotencyFilter  idempotencyFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -40,12 +43,30 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            // Idempotency runs AFTER JWT auth so SecurityContextHolder already has the user.
+            // Registered here (inside Security chain) rather than as a servlet filter so it
+            // doesn't fire before the JWT filter populates the security context.
+            .addFilterAfter(idempotencyFilter, JwtAuthFilter.class)
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((req, res, e) ->
                     res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized"))
             );
 
         return http.build();
+    }
+
+    /**
+     * Prevent Spring Boot from auto-registering IdempotencyFilter as a servlet filter.
+     * Without this, the filter would run twice per request:
+     *   1. As a raw servlet filter (before Spring Security — SecurityContext is empty).
+     *   2. Inside the Security filter chain (after JWT auth — correct behaviour).
+     * Disabling the auto-registration keeps only the Security-chain invocation.
+     */
+    @Bean
+    public FilterRegistrationBean<IdempotencyFilter> idempotencyFilterRegistration() {
+        FilterRegistrationBean<IdempotencyFilter> reg = new FilterRegistrationBean<>(idempotencyFilter);
+        reg.setEnabled(false);
+        return reg;
     }
 
     @Bean

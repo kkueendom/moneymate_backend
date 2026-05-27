@@ -1,5 +1,8 @@
 package com.moneymate.infra;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -10,14 +13,39 @@ import org.springframework.web.client.RestClientException;
 import java.util.Map;
 
 /**
- * HTTP client for the internal message-platform SMS gateway.
+ * HTTP client for the SMS gateway, hardened with Circuit Breaker + Retry.
  *
- * Two operations are supported:
- *   - sendOtp:   POST /message/commit  — triggers the platform to generate and send an OTP SMS
- *   - verifyOtp: POST /verifycode/check — validates the code the user typed in
+ * ─── WHY CIRCUIT BREAKER? ────────────────────────────────────────────────────
+ *   Without protection, if the SMS gateway goes down every one of the (many)
+ *   concurrent registration/login requests waits for the full HTTP timeout
+ *   (e.g. 30s) before failing.  Under load this exhausts the thread pool and
+ *   brings down the entire service — a "cascading failure".
  *
- * The platform owns the OTP lifecycle; we only store the tokenId in Redis so the
- * verify call can reference the same send event.
+ *   A Circuit Breaker is a state machine that short-circuits calls to a
+ *   failing dependency:
+ *
+ *     CLOSED  ──(≥50% failures in last 10 calls)──►  OPEN
+ *       ▲                                               │
+ *       │                                               │ wait 30s
+ *       │                                               ▼
+ *       └────(≥2/3 probes succeed)────────────  HALF-OPEN
+ *
+ *   While OPEN, calls fail instantly with a user-friendly message instead of
+ *   timing out.  This protects our thread pool and gives the SMS gateway time
+ *   to recover.
+ *
+ * ─── WHY RETRY? ──────────────────────────────────────────────────────────────
+ *   ~5% of SMS gateway calls fail due to transient network hiccups.
+ *   Retrying once after 500ms resolves the majority of these without the user
+ *   ever seeing an error.  We don't retry indefinitely — just once — to keep
+ *   the latency budget reasonable for a registration flow.
+ *
+ * ─── COMPOSITION ORDER ───────────────────────────────────────────────────────
+ *   Resilience4j applies decorators outside-in.  The default aspect order is:
+ *     Retry → CircuitBreaker → method call
+ *   This means: each retry attempt goes through the circuit breaker.
+ *   If the circuit is OPEN, the retry immediately receives CallNotPermittedException
+ *   and stops retrying — correct behaviour (no point retrying an open circuit).
  */
 @Slf4j
 @Component
@@ -41,18 +69,18 @@ public class SmsGatewayClient {
     /**
      * Ask the platform to generate an OTP and deliver it to {@code phone}.
      *
-     * @param phone   recipient's mobile number
-     * @param tokenId UUID that links this send to the subsequent verify call
-     * @param flowNo  idempotency key (deduplicated by the platform for ~30 s)
-     * @throws SmsGatewayException if the platform returns a non-zero code or the call fails
+     * Decorated with @Retry (1 retry on network error) and @CircuitBreaker
+     * (opens after 50% failure rate, fallback to user-friendly error).
      */
+    @CircuitBreaker(name = "sms-gateway", fallbackMethod = "sendOtpFallback")
+    @Retry(name = "sms-gateway")
     public void sendOtp(String phone, String tokenId, String flowNo) {
         Map<String, Object> body = Map.of(
-                "callerId",    callerId,
-                "mobile",      phone,
+                "callerId",     callerId,
+                "mobile",       phone,
                 "templateCode", templateCode,
-                "tokenId",     tokenId,
-                "flowNo",      flowNo
+                "tokenId",      tokenId,
+                "flowNo",       flowNo
         );
 
         GatewayResponse resp;
@@ -80,17 +108,34 @@ public class SmsGatewayClient {
     }
 
     /**
-     * Verify the OTP code the user submitted.
+     * Fallback invoked when either:
+     *   - All retries are exhausted (SmsGatewayException after 2 attempts), OR
+     *   - The circuit is OPEN (CallNotPermittedException — fast-fail, no network call made).
      *
-     * @return true if the platform returns code == 0 (verification passed)
+     * Signature rule: same method name + "Fallback", same parameters, plus a Throwable at end.
      */
+    private void sendOtpFallback(String phone, String tokenId, String flowNo, Throwable ex) {
+        if (ex instanceof CallNotPermittedException) {
+            log.warn("[SMS] Circuit OPEN — fast-failing OTP send for phone ending {}. " +
+                     "Gateway will be retried in 30s.", masked(phone));
+        } else {
+            log.error("[SMS] All retries exhausted for phone ending {}: {}", masked(phone), ex.getMessage());
+        }
+        throw new SmsGatewayException("SMS service is temporarily unavailable. Please try again shortly.");
+    }
+
+    /**
+     * Verify the OTP code the user submitted.
+     * Also protected by circuit breaker — a verify call to a down gateway should fail fast.
+     */
+    @CircuitBreaker(name = "sms-gateway", fallbackMethod = "verifyOtpFallback")
     public boolean verifyOtp(String phone, String tokenId, String inputCode) {
         Map<String, Object> body = Map.of(
-                "callerId",    callerId,
-                "mobile",      phone,
+                "callerId",     callerId,
+                "mobile",       phone,
                 "templateCode", templateCode,
-                "tokenId",     tokenId,
-                "inputCode",   inputCode
+                "tokenId",      tokenId,
+                "inputCode",    inputCode
         );
 
         GatewayResponse resp;
@@ -111,6 +156,11 @@ public class SmsGatewayClient {
         }
 
         return resp.getCode() == 0;
+    }
+
+    private boolean verifyOtpFallback(String phone, String tokenId, String inputCode, Throwable ex) {
+        log.warn("[SMS] Circuit OPEN — fast-failing OTP verify for phone ending {}", masked(phone));
+        throw new SmsGatewayException("SMS service is temporarily unavailable. Please try again shortly.");
     }
 
     // ── Inner types ───────────────────────────────────────────────────────────

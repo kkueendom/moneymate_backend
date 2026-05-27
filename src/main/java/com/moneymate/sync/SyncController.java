@@ -2,6 +2,7 @@ package com.moneymate.sync;
 
 import com.moneymate.common.ApiResponse;
 import com.moneymate.common.RateLimitService;
+import com.moneymate.infra.Idempotent;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -24,6 +25,7 @@ public class SyncController {
     private static final long SYNC_WINDOW = 60L;
 
     @PostMapping("/push")
+    @Idempotent  // safe to retry on network failure — same Idempotency-Key replays the cached response
     public ResponseEntity<ApiResponse<SyncDto.PushResponse>> push(
             @AuthenticationPrincipal String userId,
             @Valid @RequestBody SyncDto.PushRequest req) {

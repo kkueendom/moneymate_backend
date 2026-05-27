@@ -51,6 +51,46 @@ app:
       - "http://localhost:3000"
       - "https://moneymate.pk"
 
+# ── Resilience4j: Circuit Breaker + Retry for SMS gateway ───────────────────
+#
+# Circuit Breaker state machine:
+#   CLOSED  → normal operation, all calls go through
+#   OPEN    → gateway is failing; calls are short-circuited for waitDuration (30s)
+#             so we stop hammering an already-down service
+#   HALF-OPEN → after 30s, 3 probe calls are allowed through to test recovery;
+#               if ≥2 succeed the circuit closes again
+#
+# Why these numbers?
+#   sliding-window-size: 10    — evaluate the last 10 calls (small window = fast reaction)
+#   failure-rate-threshold: 50 — open if ≥50% of last 10 calls fail
+#   slow-call-duration: 3s     — SMS gateway should respond in <3s; slower = "failure"
+#   slow-call-rate: 80         — open if ≥80% of calls are slow (degraded gateway)
+#
+# Retry:
+#   max-attempts: 2            — try once, then one retry on transient network error
+#   wait-duration: 500ms       — wait 500ms between attempts (lets transient errors clear)
+#   Only retry on SmsGatewayException; don't retry on CallNotPermittedException
+#   (circuit is open — retrying would just hit the fallback again immediately)
+resilience4j:
+  circuitbreaker:
+    instances:
+      sms-gateway:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        register-health-indicator: true
+  retry:
+    instances:
+      sms-gateway:
+        max-attempts: 2
+        wait-duration: 500ms
+        retry-exceptions:
+          - com.moneymate.infra.SmsGatewayClient$SmsGatewayException
+
 springdoc:
   api-docs:
     path: /api-docs

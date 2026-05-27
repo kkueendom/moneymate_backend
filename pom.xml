@@ -21,6 +21,7 @@
         <java.version>17</java.version>
         <jjwt.version>0.12.5</jjwt.version>
         <springdoc.version>2.4.0</springdoc.version>
+        <resilience4j.version>2.1.0</resilience4j.version>
     </properties>
 
     <dependencies>
@@ -91,6 +92,18 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-mongodb</artifactId>
+        </dependency>
+
+        <!-- Resilience4j: circuit breaker + retry for external service calls (SMS gateway) -->
+        <!-- spring-boot-starter-aop is required for @CircuitBreaker/@Retry annotations -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+            <version>${resilience4j.version}</version>
         </dependency>
 
         <!-- Lombok -->

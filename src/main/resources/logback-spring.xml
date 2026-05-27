@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Custom Logback configuration.
+    Key addition over Spring Boot's default: %X{correlationId:--} in every log line.
+    This reads the MDC value written by CorrelationFilter, printing "--" when absent
+    (e.g. background tasks that don't originate from an HTTP request).
+
+    Example output:
+      14:23:01.456 INFO  [3f2a1bcd-...] [http-nio-8080-exec-3] SyncController : Push received, 47 records
+      14:23:01.461 INFO  [3f2a1bcd-...] [http-nio-8080-exec-3] SyncService    : Upserted 47, skipped 0
+      14:23:01.463 INFO  [3f2a1bcd-...] [http-nio-8080-exec-3] SyncController : Push complete in 7ms
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%X{correlationId:--}] [%15.15t] %-40.40logger{39} : %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- Suppress framework noise so application logs stand out -->
+    <logger name="org.springframework.web.servlet.mvc.method.annotation" level="WARN"/>
+    <logger name="org.hibernate.SQL"  level="WARN"/>
+    <logger name="io.lettuce"         level="WARN"/>
+</configuration>
